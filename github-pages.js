@@ -45,6 +45,8 @@ async function openBook(book) {
   app.querySelector(".back-link").addEventListener("click", renderLibrary);
   app.querySelector("[data-prev]").addEventListener("click", () => turn(-1));
   app.querySelector("[data-next]").addEventListener("click", () => turn(1));
+  app.querySelector(".page-hit-left").addEventListener("click", () => turn(-1));
+  app.querySelector(".page-hit-right").addEventListener("click", () => turn(1));
   app.querySelector("[data-capture]").addEventListener("click", capture);
   app.querySelectorAll("[data-sticker]").forEach((button) => button.addEventListener("click", () => addSticker(button.dataset.sticker)));
   renderReader();
