@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>사각사각 | 문집 서재</title>
+    <meta name="description" content="완성된 문집 PDF를 책처럼 읽는 사각사각 서재">
+    <link rel="stylesheet" href="./github-pages.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="brand" type="button" data-library-link>
+          <span class="brand-mark" aria-hidden="true">ㅅ</span>
+          <span><strong>사각사각</strong><small>문집 서재와 읽기 뷰어</small></span>
+        </button>
+        <nav class="route-tabs" aria-label="주요 화면">
+          <button type="button" data-library-link aria-current="page">서재</button>
+          <button type="button" data-viewer-link>뷰어</button>
+        </nav>
+      </header>
+      <main id="app" aria-live="polite"></main>
+    </div>
+    <script type="module" src="./github-pages.js"></script>
+  </body>
+</html>
