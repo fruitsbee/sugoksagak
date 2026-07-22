@@ -56,6 +56,8 @@ test("ships the library and gesture-ready PDF reader", async () => {
   assert.match(reader, /primary.width \+ secondary.width/);
   assert.match(reader, /startPageGesture/);
   assert.match(reader, /finishPageGesture/);
+  assert.match(reader, /page-hit-left/);
+  assert.match(reader, /page-hit-right/);
   assert.doesNotMatch(reader, /sticker/i);
   assert.match(styles, /@media \(max-width:720px\)/);
   assert.match(manifest, /2026-spring\.pdf/);

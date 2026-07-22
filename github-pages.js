@@ -12,6 +12,7 @@ let pdfjs = null;
 let primaryCanvas = null;
 let secondaryCanvas = null;
 let gestureStart = null;
+let suppressPageClick = false;
 
 function assetPath(value) {
   return value.startsWith("/") ? `.${value.startsWith("/books/") ? `/public${value}` : value}` : value;
@@ -40,15 +41,18 @@ async function openBook(book) {
   page = 1;
   pageCount = book.pageCount;
   setRoute("viewer");
-  app.innerHTML = `<main class="reader"><section class="reader-stage"><div class="page-frame"></div></section><aside class="reader-meta"><button class="back-link" type="button">서재</button><p class="eyebrow">읽는 중</p><h1>${book.title}</h1><p>${book.subtitle}</p><dl><div><dt>편집</dt><dd>${book.editor}</dd></div><div><dt>현재 쪽</dt><dd data-page-meta></dd></div></dl></aside><nav class="reader-toolbar"><div><button class="tool-button" data-prev type="button">이전</button><strong data-counter></strong><button class="tool-button" data-next type="button">다음</button></div><button class="capture-button" data-capture type="button">현재 쪽 저장</button></nav></main>`;
+  app.innerHTML = `<main class="reader"><section class="reader-stage"><button class="page-hit page-hit-left" type="button" aria-label="이전 페이지"></button><div class="page-frame"></div><button class="page-hit page-hit-right" type="button" aria-label="다음 페이지"></button></section><aside class="reader-meta"><button class="back-link" type="button">서재</button><p class="eyebrow">읽는 중</p><h1>${book.title}</h1><p>${book.subtitle}</p><dl><div><dt>편집</dt><dd>${book.editor}</dd></div><div><dt>현재 쪽</dt><dd data-page-meta></dd></div></dl></aside><nav class="reader-toolbar"><div><button class="tool-button" data-prev type="button">이전</button><strong data-counter></strong><button class="tool-button" data-next type="button">다음</button></div><button class="capture-button" data-capture type="button">현재 쪽 저장</button></nav></main>`;
   app.querySelector(".back-link").addEventListener("click", renderLibrary);
   app.querySelector("[data-prev]").addEventListener("click", () => turn(-1));
   app.querySelector("[data-next]").addEventListener("click", () => turn(1));
+  app.querySelector(".page-hit-left").addEventListener("click", () => turnFromPageEdge(-1));
+  app.querySelector(".page-hit-right").addEventListener("click", () => turnFromPageEdge(1));
   app.querySelector("[data-capture]").addEventListener("click", capture);
   const stage = app.querySelector(".reader-stage");
   stage.addEventListener("pointerdown", startPageGesture);
+  stage.addEventListener("pointermove", movePageGesture);
   stage.addEventListener("pointerup", finishPageGesture);
-  stage.addEventListener("pointercancel", () => { gestureStart = null; });
+  stage.addEventListener("pointercancel", () => { gestureStart = null; settlePageFrame(0); });
   renderReader();
 }
 
@@ -101,7 +105,18 @@ function turn(direction) {
 
 function startPageGesture(event) {
   gestureStart = { x: event.clientX, y: event.clientY };
+  const frame = app.querySelector(".page-frame");
+  if (frame) frame.style.transition = "none";
   event.currentTarget.setPointerCapture(event.pointerId);
+}
+
+function movePageGesture(event) {
+  if (!gestureStart) return;
+  const frame = app.querySelector(".page-frame");
+  if (!frame) return;
+  const deltaX = event.clientX - gestureStart.x;
+  const offset = Math.max(-42, Math.min(42, deltaX * .18));
+  frame.style.transform = `translate3d(${offset}px,0,0)`;
 }
 
 function finishPageGesture(event) {
@@ -111,8 +126,32 @@ function finishPageGesture(event) {
   if (!start) return;
   const deltaX = event.clientX - start.x;
   const deltaY = event.clientY - start.y;
-  if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
-  turn(deltaX < 0 ? 1 : -1);
+  if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) { settlePageFrame(0); return; }
+  suppressPageClick = true;
+  window.setTimeout(() => { suppressPageClick = false; }, 0);
+  const direction = deltaX < 0 ? 1 : -1;
+  turn(direction);
+  settlePageFrame(direction);
+}
+
+function turnFromPageEdge(direction) {
+  if (suppressPageClick) {
+    suppressPageClick = false;
+    return;
+  }
+  turn(direction);
+  settlePageFrame(direction);
+}
+
+function settlePageFrame(direction) {
+  const frame = app.querySelector(".page-frame");
+  if (!frame) return;
+  frame.style.transition = "none";
+  if (direction !== 0) frame.style.transform = `translate3d(${direction > 0 ? 34 : -34}px,0,0)`;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    frame.style.transition = "transform 320ms cubic-bezier(.22,.8,.2,1)";
+    frame.style.transform = "translate3d(0,0,0)";
+  }));
 }
 
 async function capture() {

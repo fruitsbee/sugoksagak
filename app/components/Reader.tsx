@@ -16,7 +16,9 @@ export function Reader({ book, onBack }: ReaderProps) {
   const [isWide, setIsWide] = useState(false);
   const primaryCanvasRef = useRef<HTMLCanvasElement>(null);
   const secondaryCanvasRef = useRef<HTMLCanvasElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const gestureStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressPageClickRef = useRef(false);
   const spreadSize = isWide ? 2 : 1;
   const nextPage = page + 1;
 
@@ -46,7 +48,17 @@ export function Reader({ book, onBack }: ReaderProps) {
 
   function startPageGesture(event: ReactPointerEvent<HTMLElement>) {
     gestureStartRef.current = { x: event.clientX, y: event.clientY };
+    if (frameRef.current) frameRef.current.style.transition = "none";
     event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function movePageGesture(event: ReactPointerEvent<HTMLElement>) {
+    const start = gestureStartRef.current;
+    const frame = frameRef.current;
+    if (!start || !frame) return;
+    const deltaX = event.clientX - start.x;
+    const offset = Math.max(-42, Math.min(42, deltaX * 0.18));
+    frame.style.transform = `translate3d(${offset}px,0,0)`;
   }
 
   function finishPageGesture(event: ReactPointerEvent<HTMLElement>) {
@@ -56,8 +68,37 @@ export function Reader({ book, onBack }: ReaderProps) {
     if (!start) return;
     const deltaX = event.clientX - start.x;
     const deltaY = event.clientY - start.y;
-    if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
-    turn(deltaX < 0 ? 1 : -1);
+    if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) {
+      settlePageFrame(0);
+      return;
+    }
+    suppressPageClickRef.current = true;
+    window.setTimeout(() => { suppressPageClickRef.current = false; }, 0);
+    const direction = deltaX < 0 ? 1 : -1;
+    turn(direction);
+    settlePageFrame(direction);
+  }
+
+  function turnFromPageEdge(delta: number) {
+    if (suppressPageClickRef.current) {
+      suppressPageClickRef.current = false;
+      return;
+    }
+    turn(delta);
+    settlePageFrame(delta);
+  }
+
+  function settlePageFrame(direction: number) {
+    const frame = frameRef.current;
+    if (!frame) return;
+    frame.style.transition = "none";
+    frame.style.transform = direction === 0 ? frame.style.transform : `translate3d(${direction > 0 ? 34 : -34}px,0,0)`;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        frame.style.transition = "transform 320ms cubic-bezier(.22,.8,.2,1)";
+        frame.style.transform = "translate3d(0,0,0)";
+      });
+    });
   }
 
   async function capture() {
@@ -84,11 +125,13 @@ export function Reader({ book, onBack }: ReaderProps) {
 
   return (
     <main className="reader-page" id="main-content">
-      <section className="reader-stage" aria-label={`${book.title} 읽기`} onPointerCancel={() => { gestureStartRef.current = null; }} onPointerDown={startPageGesture} onPointerUp={finishPageGesture}>
-        <div className={`page-frame${isWide ? " is-spread" : ""}`}>
+      <section className="reader-stage" aria-label={`${book.title} 읽기`} onPointerCancel={() => { gestureStartRef.current = null; settlePageFrame(0); }} onPointerDown={startPageGesture} onPointerMove={movePageGesture} onPointerUp={finishPageGesture}>
+        <button aria-label="이전 페이지" className="page-hit page-hit-left" disabled={page === 1} onClick={() => turnFromPageEdge(-1)} type="button" />
+        <div className={`page-frame${isWide ? " is-spread" : ""}`} ref={frameRef}>
           <PageSheet book={book} canvasRef={primaryCanvasRef} onPageCount={setPageCount} page={page} />
           {isWide && nextPage <= pageCount ? <PageSheet book={book} canvasRef={secondaryCanvasRef} onPageCount={setPageCount} page={nextPage} /> : null}
         </div>
+        <button aria-label="다음 페이지" className="page-hit page-hit-right" disabled={page + spreadSize > pageCount} onClick={() => turnFromPageEdge(1)} type="button" />
       </section>
       <aside className="reader-meta">
         <button className="back-link" type="button" onClick={onBack}>서재</button>

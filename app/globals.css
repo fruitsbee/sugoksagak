@@ -52,7 +52,7 @@ body { background:var(--paper); }
 .book-spine { display:none; }
 .reader-page { width:100%; height:calc(100dvh - 64px); margin:0; padding:.65rem clamp(.75rem,2vw,1.5rem); grid-template-columns:minmax(0,1fr) 164px; grid-template-rows:minmax(0,1fr) auto; gap:.55rem 1rem; }
 .reader-stage { border:0; border-radius:0; background:var(--canvas); touch-action:pan-y; user-select:none; }
-.page-frame { max-width:100%; max-height:100%; box-shadow:0 10px 30px rgb(37 38 34 / .11); }
+.page-frame { max-width:100%; max-height:100%; box-shadow:0 10px 30px rgb(37 38 34 / .11); will-change:transform; }
 .page-sheet { border:0 !important; }
 .reader-meta { border:0; border-radius:0; padding:.45rem 0; background:transparent; }
 .reader-meta h1 { font-size:1.25rem; letter-spacing:-.03em; }
@@ -82,3 +82,4 @@ body { background:var(--paper); }
   .tool-button,.capture-button { min-height:2rem; padding-inline:.7rem; }
   .capture-button { min-width:0; }
 }
+@media (prefers-reduced-motion:reduce) { .page-frame { transition:none!important; } }
