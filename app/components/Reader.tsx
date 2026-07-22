@@ -1,25 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
-import type { Book, Sticker, StickerKind } from "./model";
-import { stickerOptions } from "./model";
+import type { Book } from "./model";
 import { PdfPage } from "./PdfPage";
 
 type ReaderProps = {
   readonly book: Book;
-  readonly stickers: readonly Sticker[];
   readonly onBack: () => void;
-  readonly onAddSticker: (page: number, kind: StickerKind, label: string) => void;
-  readonly onMoveSticker: (id: string, x: number, y: number) => void;
 };
 
-export function Reader({ book, stickers, onBack, onAddSticker, onMoveSticker }: ReaderProps) {
+export function Reader({ book, onBack }: ReaderProps) {
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(book.pageCount);
   const [isWide, setIsWide] = useState(false);
   const primaryCanvasRef = useRef<HTMLCanvasElement>(null);
   const secondaryCanvasRef = useRef<HTMLCanvasElement>(null);
+  const gestureStartRef = useRef<{ x: number; y: number } | null>(null);
+  const spreadSize = isWide ? 2 : 1;
+  const nextPage = page + 1;
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1051px)");
@@ -29,14 +28,36 @@ export function Reader({ book, stickers, onBack, onAddSticker, onMoveSticker }: 
     return () => media.removeEventListener("change", update);
   }, []);
 
-  const spreadSize = isWide ? 2 : 1;
-  const nextPage = page + 1;
-
-  function turn(delta: number) {
+  const turn = useCallback((delta: number) => {
     setPage((current) => {
       const next = current + delta * spreadSize;
       return Math.min(Math.max(next, 1), Math.max(1, pageCount - (spreadSize - 1)));
     });
+  }, [pageCount, spreadSize]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") turn(-1);
+      if (event.key === "ArrowRight") turn(1);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [turn]);
+
+  function startPageGesture(event: ReactPointerEvent<HTMLElement>) {
+    gestureStartRef.current = { x: event.clientX, y: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function finishPageGesture(event: ReactPointerEvent<HTMLElement>) {
+    const start = gestureStartRef.current;
+    gestureStartRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!start) return;
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    turn(deltaX < 0 ? 1 : -1);
   }
 
   async function capture() {
@@ -63,13 +84,11 @@ export function Reader({ book, stickers, onBack, onAddSticker, onMoveSticker }: 
 
   return (
     <main className="reader-page" id="main-content">
-      <section className="reader-stage" aria-label={`${book.title} 읽기`}>
-        <button aria-label="이전 페이지" className="page-hit page-hit-left" disabled={page === 1} onClick={() => turn(-1)} type="button" />
+      <section className="reader-stage" aria-label={`${book.title} 읽기`} onPointerCancel={() => { gestureStartRef.current = null; }} onPointerDown={startPageGesture} onPointerUp={finishPageGesture}>
         <div className={`page-frame${isWide ? " is-spread" : ""}`}>
-          <PageSheet book={book} canvasRef={primaryCanvasRef} onMoveSticker={onMoveSticker} onPageCount={setPageCount} page={page} stickers={stickers} />
-          {isWide && nextPage <= pageCount ? <PageSheet book={book} canvasRef={secondaryCanvasRef} onMoveSticker={onMoveSticker} onPageCount={setPageCount} page={nextPage} stickers={stickers} /> : null}
+          <PageSheet book={book} canvasRef={primaryCanvasRef} onPageCount={setPageCount} page={page} />
+          {isWide && nextPage <= pageCount ? <PageSheet book={book} canvasRef={secondaryCanvasRef} onPageCount={setPageCount} page={nextPage} /> : null}
         </div>
-        <button aria-label="다음 페이지" className="page-hit page-hit-right" disabled={page + spreadSize > pageCount} onClick={() => turn(1)} type="button" />
       </section>
       <aside className="reader-meta">
         <button className="back-link" type="button" onClick={onBack}>서재</button>
@@ -80,7 +99,6 @@ export function Reader({ book, stickers, onBack, onAddSticker, onMoveSticker }: 
       </aside>
       <nav className="reader-toolbar" aria-label="읽기 도구">
         <div><button className="tool-button" disabled={page === 1} onClick={() => turn(-1)} type="button">이전</button><strong>{page}{isWide && nextPage <= pageCount ? `-${nextPage}` : ""} / {pageCount}</strong><button className="tool-button" disabled={page + spreadSize > pageCount} onClick={() => turn(1)} type="button">다음</button></div>
-        <div className="sticker-tools">{stickerOptions.map((option) => <button aria-label={option.label} className={`sticker-button sticker-button-${option.kind}`} key={option.kind} onClick={() => onAddSticker(page, option.kind, option.label)} type="button"><img alt="" src={`/stickers/${option.kind}.svg`} /></button>)}</div>
         <button className="capture-button" onClick={capture} type="button">현재 쪽 저장</button>
       </nav>
     </main>
@@ -90,61 +108,16 @@ export function Reader({ book, stickers, onBack, onAddSticker, onMoveSticker }: 
 type PageSheetProps = {
   readonly book: Book;
   readonly canvasRef: RefObject<HTMLCanvasElement | null>;
-  readonly onMoveSticker: (id: string, x: number, y: number) => void;
   readonly onPageCount: (pageCount: number) => void;
   readonly page: number;
-  readonly stickers: readonly Sticker[];
 };
 
-function PageSheet({ book, canvasRef, onMoveSticker, onPageCount, page, stickers }: PageSheetProps) {
+function PageSheet({ book, canvasRef, onPageCount, page }: PageSheetProps) {
   return (
     <div className="page-sheet">
       {book.pdfUrl ? <PdfPage canvasRef={canvasRef} onPageCount={onPageCount} page={page} url={book.pdfUrl} /> : null}
-      <div className="sticker-layer">
-        {stickers.filter((sticker) => sticker.page === page).map((sticker) => (
-          <button
-            aria-label={sticker.label}
-            className={`page-sticker sticker-${sticker.kind}`}
-            key={sticker.id}
-            onPointerDown={(event) => startStickerDrag(event, sticker, onMoveSticker)}
-            style={{ left: `${sticker.x * 100}%`, top: `${sticker.y * 100}%` }}
-            type="button"
-          >
-            <img alt="" src={`/stickers/${sticker.kind}.svg`} />
-          </button>
-        ))}
-      </div>
     </div>
   );
-}
-
-function startStickerDrag(event: ReactPointerEvent<HTMLButtonElement>, sticker: Sticker, onMoveSticker: (id: string, x: number, y: number) => void) {
-  const node = event.currentTarget;
-  const sheet = node.closest<HTMLElement>(".page-sheet");
-  if (!sheet) return;
-  event.preventDefault();
-  node.setPointerCapture(event.pointerId);
-  const rect = sheet.getBoundingClientRect();
-  let position = { x: sticker.x, y: sticker.y };
-  const update = (moveEvent: globalThis.PointerEvent) => {
-    moveEvent.preventDefault();
-    position = {
-      x: Math.min(Math.max((moveEvent.clientX - rect.left) / rect.width, 0.08), 0.92),
-      y: Math.min(Math.max((moveEvent.clientY - rect.top) / rect.height, 0.08), 0.92),
-    };
-    node.style.left = `${position.x * 100}%`;
-    node.style.top = `${position.y * 100}%`;
-  };
-  const finish = () => {
-    node.removeEventListener("pointermove", update);
-    node.removeEventListener("pointerup", finish);
-    node.removeEventListener("pointercancel", finish);
-    if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
-    onMoveSticker(sticker.id, position.x, position.y);
-  };
-  node.addEventListener("pointermove", update);
-  node.addEventListener("pointerup", finish);
-  node.addEventListener("pointercancel", finish);
 }
 
 async function sampleCanvas(page: number): Promise<HTMLCanvasElement | null> {

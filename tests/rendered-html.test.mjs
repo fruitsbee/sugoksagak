@@ -36,7 +36,7 @@ test("server-renders the Sagaksagak reading service", async () => {
   assert.match(html, /문집 서재와 읽기 뷰어/);
 });
 
-test("ships the library and two-page PDF reader", async () => {
+test("ships the library and gesture-ready PDF reader", async () => {
   const [page, layout, reader, pdfPage, styles, manifest] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -54,7 +54,9 @@ test("ships the library and two-page PDF reader", async () => {
   assert.match(reader, /is-spread/);
   assert.match(reader, /secondaryCanvasRef/);
   assert.match(reader, /primary.width \+ secondary.width/);
-  assert.match(reader, /stickers\/\$\{/);
+  assert.match(reader, /startPageGesture/);
+  assert.match(reader, /finishPageGesture/);
+  assert.doesNotMatch(reader, /sticker/i);
   assert.match(styles, /@media \(max-width:720px\)/);
   assert.match(manifest, /2026-spring\.pdf/);
 
