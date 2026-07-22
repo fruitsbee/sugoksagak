@@ -23,7 +23,7 @@ function setRoute(route) {
 }
 
 async function loadBooks() {
-  const response = await fetch("./public/books/manifest.json");
+  const response = await fetch("./public/books/manifest.json", { cache: "no-store" });
   books = await response.json();
   renderLibrary();
 }

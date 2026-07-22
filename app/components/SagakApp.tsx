@@ -18,7 +18,7 @@ export function SagakApp() {
     let cancelled = false;
     async function loadManifest() {
       try {
-        const response = await fetch("/books/manifest.json");
+        const response = await fetch("/books/manifest.json", { cache: "no-store" });
         if (!response.ok) return;
         const manifest = await response.json() as Book[];
         if (!cancelled && manifest.length > 0) setBooks(manifest);
