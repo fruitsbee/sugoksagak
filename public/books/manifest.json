@@ -9,5 +9,16 @@
     "source": "pdf",
     "pdfUrl": "/books/2026-spring.pdf",
     "coverUrl": "/books/2026-spring-cover.png"
+  },
+  {
+    "id": "sugok-summer",
+    "title": "사각사각",
+    "subtitle": "수곡초 여름 이야기",
+    "editor": "수곡초 어린이 글 모음",
+    "createdAt": "2026.07.22",
+    "pageCount": 59,
+    "source": "pdf",
+    "pdfUrl": "/books/2026-summer.pdf",
+    "coverUrl": "/books/2026-summer-cover.png"
   }
 ]
