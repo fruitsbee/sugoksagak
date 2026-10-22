@@ -1,168 +1,145 @@
-const app = document.querySelector("#app");
-const libraryLinks = document.querySelectorAll("[data-library-link]");
-const viewerLink = document.querySelector("[data-viewer-link]");
-const cdnPdfJs = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
-const cdnPdfWorker = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
-let books = [];
-let activeBook = null;
-let page = 1;
-let pageCount = 1;
-let wide = window.matchMedia("(min-width:1051px)").matches;
-let pdfjs = null;
-let primaryCanvas = null;
-let secondaryCanvas = null;
-let gestureStart = null;
-let suppressPageClick = false;
+import { clampPage, validateBooks, ReaderSession } from './lib/reader-core.js';
 
-function assetPath(value) {
-  return value.startsWith("/") ? `.${value.startsWith("/books/") ? `/public${value}` : value}` : value;
+const app = document.querySelector('#app');
+const libraryLinks = document.querySelectorAll('[data-library-link]');
+const viewerLink = document.querySelector('[data-viewer-link]');
+const media = window.matchMedia('(min-width:1051px)');
+let books = [], activeBook = null, screen = 'library', page = 1, pageCount = 1;
+let wide = media.matches, pdfModule, session, opening = 0, canvases = [], zoom = false;
+let gestureStart = null, suppressUntil = 0;
+const escape = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const assetPath = value => `./public${value}`;
+const savedPage = book => { try { return localStorage.getItem(`sagak-page:${book.id}`) || 1; } catch { return 1; } };
+function savePage() { try { localStorage.setItem(`sagak-page:${activeBook.id}`, String(page)); } catch {} }
+function setRoute(value) {
+  screen = value;
+  libraryLinks.forEach(link => link.setAttribute('aria-current', value === 'library' ? 'page' : 'false'));
+  viewerLink.setAttribute('aria-current', value === 'reader' ? 'page' : 'false');
 }
-
-function setRoute(route) {
-  libraryLinks.forEach((link) => link.setAttribute("aria-current", route === "library" ? "page" : "false"));
-  viewerLink.setAttribute("aria-current", route === "viewer" ? "page" : "false");
+function setHash() { history.replaceState(null, '', `#book=${encodeURIComponent(activeBook.id)}&page=${page}`); }
+function showLibrary() {
+  opening++; session?.close(); canvases = []; gestureStart = null;
+  setRoute('library'); history.replaceState(null, '', location.pathname + location.search);
+  app.innerHTML = `<section class="shelf"><p class="eyebrow">문집 서재</p><h1>오늘 펼쳐볼 문집</h1><p class="shelf-lead">수곡초 어린이들의 글과 그림을 책처럼 펼쳐 읽어 보세요. 읽던 쪽은 이 기기에 기억됩니다.</p><section class="shelf-grid" aria-label="발행된 문집">${books.map(book => `<button class="book-tile" type="button" data-book-id="${book.id}"><span class="book-cover-art"><img alt="" src="${assetPath(book.coverUrl)}" loading="lazy"></span><span class="book-tile-copy"><strong>${escape(book.title)}</strong><small>${escape(book.subtitle)}</small><small>${book.pageCount}쪽 · ${escape(book.createdAt)}</small></span></button>`).join('')}</section></section>`;
+  app.querySelectorAll('[data-book-id]').forEach(button => button.addEventListener('click', () => openBook(books.find(book => book.id === button.dataset.bookId))));
 }
-
-async function loadBooks() {
-  const response = await fetch("./public/books/manifest.json", { cache: "no-store" });
-  books = await response.json();
-  renderLibrary();
+async function getSession() {
+  if (!pdfModule) pdfModule = import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs').catch(error => { pdfModule = null; throw error; });
+  const pdfjs = await pdfModule;
+  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+  session ??= new ReaderSession(url => pdfjs.getDocument(url));
+  return session;
 }
-
-function renderLibrary() {
-  setRoute("library");
-  app.innerHTML = `<section class="shelf"><p class="eyebrow">문집 서재</p><h1>오늘 펼쳐볼 문집</h1><p class="shelf-lead">완성된 문집을 그대로 읽고, 마음에 남는 페이지에는 다정한 반응을 남깁니다.</p><section class="shelf-grid" aria-label="발행된 문집">${books.map((book) => `<button class="book-tile" type="button" data-book-id="${book.id}"><span class="book-cover-art">${book.coverUrl ? `<img alt="" src="${assetPath(book.coverUrl)}">` : "<span>PDF</span>"}</span><span class="book-tile-copy"><strong>${book.title}</strong><small>${book.subtitle}</small><small>${book.pageCount}쪽 · ${book.createdAt}</small></span></button>`).join("")}</section></section>`;
-  app.querySelectorAll("[data-book-id]").forEach((button) => button.addEventListener("click", () => openBook(books.find((book) => book.id === button.dataset.bookId))));
-}
-
-async function openBook(book) {
+async function openBook(book, target = savedPage(book)) {
   if (!book) return;
-  activeBook = book;
-  page = 1;
-  pageCount = book.pageCount;
-  setRoute("viewer");
-  app.innerHTML = `<main class="reader"><section class="reader-stage"><button class="page-hit page-hit-left" type="button" aria-label="이전 페이지"></button><div class="page-frame"></div><button class="page-hit page-hit-right" type="button" aria-label="다음 페이지"></button></section><aside class="reader-meta"><button class="back-link" type="button">서재</button><p class="eyebrow">읽는 중</p><h1>${book.title}</h1><p>${book.subtitle}</p><dl><div><dt>편집</dt><dd>${book.editor}</dd></div><div><dt>현재 쪽</dt><dd data-page-meta></dd></div></dl></aside><nav class="reader-toolbar"><div><button class="tool-button" data-prev type="button">이전</button><strong data-counter></strong><button class="tool-button" data-next type="button">다음</button></div><button class="capture-button" data-capture type="button">현재 쪽 저장</button></nav></main>`;
-  app.querySelector(".back-link").addEventListener("click", renderLibrary);
-  app.querySelector("[data-prev]").addEventListener("click", () => turn(-1));
-  app.querySelector("[data-next]").addEventListener("click", () => turn(1));
-  app.querySelector(".page-hit-left").addEventListener("click", () => turnFromPageEdge(-1));
-  app.querySelector(".page-hit-right").addEventListener("click", () => turnFromPageEdge(1));
-  app.querySelector("[data-capture]").addEventListener("click", capture);
-  const stage = app.querySelector(".reader-stage");
-  stage.addEventListener("pointerdown", startPageGesture);
-  stage.addEventListener("pointermove", movePageGesture);
-  stage.addEventListener("pointerup", finishPageGesture);
-  stage.addEventListener("pointercancel", () => { gestureStart = null; settlePageFrame(0); });
-  renderReader();
+  const request = ++opening;
+  session?.close(); activeBook = book; pageCount = book.pageCount; page = clampPage(target, pageCount); canvases = []; zoom = false;
+  setRoute('reader'); setHash();
+  app.innerHTML = `<section class="reader"><section class="reader-stage" aria-label="문집 페이지"><button class="page-hit page-hit-left" aria-label="이전 페이지"></button><div class="page-frame"></div><button class="page-hit page-hit-right" aria-label="다음 페이지"></button></section><aside class="reader-meta"><button class="back-link" type="button">서재</button><h1>${escape(book.title)}</h1><p>${escape(book.subtitle)}</p><p>${escape(book.editor)}</p><a href="${assetPath(book.pdfUrl)}" target="_blank" rel="noopener">원본 PDF 열기</a></aside><nav class="reader-toolbar" aria-label="읽기 도구"><div><button data-prev>이전</button><span data-counter></span><button data-next>다음</button></div><form data-jump><label>쪽 <input name="page" type="number" min="1" max="${pageCount}" value="${page}" aria-label="이동할 쪽" required></label><button>이동</button></form><div><button data-zoom aria-pressed="false">확대</button><button data-share>주소 복사</button><button data-capture disabled>현재 쪽 저장</button></div></nav><p class="reader-status" role="status"></p></section>`;
+  app.querySelector('.back-link').onclick = showLibrary;
+  app.querySelector('[data-prev]').onclick = () => turn(-1);
+  app.querySelector('[data-next]').onclick = () => turn(1);
+  app.querySelector('.page-hit-left').onclick = () => { if (Date.now() > suppressUntil) turn(-1); };
+  app.querySelector('.page-hit-right').onclick = () => { if (Date.now() > suppressUntil) turn(1); };
+  app.querySelector('[data-jump]').onsubmit = event => { event.preventDefault(); page = clampPage(new FormData(event.currentTarget).get('page'), pageCount); renderReader(); };
+  app.querySelector('[data-capture]').onclick = capture;
+  app.querySelector('[data-share]').onclick = async () => { try { await navigator.clipboard.writeText(location.href); status('현재 문집과 쪽 주소를 복사했습니다.'); } catch { status('주소창의 주소를 복사해 주세요.'); } };
+  app.querySelector('[data-zoom]').onclick = event => {
+    zoom = !zoom; app.querySelector('.reader-stage').classList.toggle('is-zoomed', zoom);
+    event.currentTarget.setAttribute('aria-pressed', String(zoom)); event.currentTarget.textContent = zoom ? '축소' : '확대';
+  };
+  const stage = app.querySelector('.reader-stage');
+  stage.onpointerdown = event => { if (!zoom && event.isPrimary && event.button === 0) gestureStart = {x:event.clientX,y:event.clientY}; };
+  stage.onpointercancel = () => { gestureStart = null; };
+  stage.onpointerleave = () => { gestureStart = null; };
+  stage.onpointerup = event => {
+    const start = gestureStart; gestureStart = null; if (!start || zoom) return;
+    const dx = event.clientX - start.x, dy = event.clientY - start.y;
+    if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy)) { suppressUntil = Date.now() + 400; turn(dx < 0 ? 1 : -1); }
+  };
+  status('문집을 여는 중입니다…'); updateControls();
+  try {
+    const reader = await getSession();
+    if (opening !== request) return;
+    const pdfPromise = reader.document(assetPath(book.pdfUrl), ({loaded,total}) => {
+      if (opening === request && screen === 'reader') status(total ? `문집을 불러오는 중… ${Math.min(100, Math.round(loaded / total * 100))}%` : '문집을 불러오는 중…');
+    });
+    await pdfPromise;
+    if (opening !== request) return;
+    await renderReader();
+  } catch { if (opening === request) showError(); }
 }
-
-async function getPdf() {
-  if (!pdfjs) {
-    pdfjs = await import(cdnPdfJs);
-    pdfjs.GlobalWorkerOptions.workerSrc = cdnPdfWorker;
-  }
-  return pdfjs.getDocument(assetPath(activeBook.pdfUrl)).promise;
+function status(text) { const node = app.querySelector('.reader-status'); if (node) node.textContent = text; }
+function showError() {
+  app.querySelector('.page-frame')?.replaceChildren();
+  canvases = []; updateControls(); status('문집을 열지 못했습니다. 다시 시도하거나 원본 PDF를 열어 주세요.');
+  const button = document.createElement('button'); button.textContent = '다시 시도'; button.onclick = () => openBook(activeBook, page);
+  app.querySelector('.reader-status')?.append(' ', button);
 }
-
-async function renderSheet(number, sheet) {
-  sheet.innerHTML = `<p class="page-status">페이지를 여는 중입니다.</p><canvas class="pdf-canvas"></canvas>`;
-  const document = await getPdf();
-  pageCount = document.numPages;
-  const pdfPage = await document.getPage(number);
-  const canvas = sheet.querySelector("canvas");
-  const viewport = pdfPage.getViewport({ scale: 1.55 });
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
-  await pdfPage.render({ canvas, canvasContext: canvas.getContext("2d"), viewport }).promise;
-  sheet.querySelector(".page-status")?.remove();
-  return canvas;
+function updateControls() {
+  if (screen !== 'reader') return;
+  const end = Math.min(page + (wide ? 1 : 0), pageCount);
+  app.querySelector('[data-counter]').textContent = `${page}${end !== page ? `–${end}` : ''} / ${pageCount}`;
+  app.querySelector('[data-prev]').disabled = page <= 1;
+  app.querySelector('[data-next]').disabled = end >= pageCount;
+  app.querySelector('.page-hit-left').disabled = page <= 1;
+  app.querySelector('.page-hit-right').disabled = end >= pageCount;
+  app.querySelector('[data-capture]').disabled = !canvases.length;
+  const input = app.querySelector('[name=page]'); input.max = pageCount; input.value = page;
 }
-
 async function renderReader() {
-  const frame = app.querySelector(".page-frame");
-  frame.classList.toggle("is-spread", wide);
-  frame.innerHTML = "";
-  const left = document.createElement("div");
-  left.className = "page-sheet";
-  frame.append(left);
-  primaryCanvas = await renderSheet(page, left);
-  if (wide && page + 1 <= pageCount) {
-    const right = document.createElement("div");
-    right.className = "page-sheet";
-    frame.append(right);
-    secondaryCanvas = await renderSheet(page + 1, right);
-  } else secondaryCanvas = null;
-  app.querySelector("[data-counter]").textContent = `${page}${wide && page + 1 <= pageCount ? `-${page + 1}` : ""} / ${pageCount}`;
-  app.querySelector("[data-page-meta]").textContent = `${page}${wide && page + 1 <= pageCount ? `-${page + 1}` : ""} / ${pageCount}`;
-  app.querySelector("[data-prev]").disabled = page === 1;
-  app.querySelector("[data-next]").disabled = page + (wide ? 2 : 1) > pageCount;
+  if (screen !== 'reader' || !session?.task) return;
+  const token = session.invalidate(), reader = session, requestedPage = page, spread = wide;
+  canvases = []; updateControls(); status('페이지를 여는 중입니다…');
+  const frame = app.querySelector('.page-frame'); frame.setAttribute('aria-busy', 'true');
+  try {
+    const pdf = await reader.task.promise;
+    if (!reader.current(token)) return;
+    pageCount = pdf.numPages; page = clampPage(requestedPage, pageCount);
+    const first = page;
+    const numbers = spread && first < pageCount ? [first, first + 1] : [first];
+    const sheets = await Promise.all(numbers.map(async number => {
+      const pdfPage = await pdf.getPage(number);
+      if (!reader.current(token)) return null;
+      const sheet = document.createElement('div'); sheet.className = 'page-sheet';
+      const canvas = document.createElement('canvas'); canvas.className = 'pdf-canvas';
+      canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', `${activeBook.subtitle} ${number}쪽`);
+      const viewport = pdfPage.getViewport({ scale:1.55 }); canvas.width = Math.floor(viewport.width); canvas.height = Math.floor(viewport.height);
+      sheet.append(canvas); await reader.paint(pdfPage, {canvas,canvasContext:canvas.getContext('2d'),viewport});
+      return sheet;
+    }));
+    if (!reader.current(token) || screen !== 'reader') return;
+    frame.replaceChildren(...sheets); frame.classList.toggle('is-spread', sheets.length === 2); frame.setAttribute('aria-busy','false');
+    canvases = sheets.map(sheet => sheet.firstChild); updateControls(); savePage(); setHash(); status('');
+  } catch (error) { if (reader.current(token) && screen === 'reader') { frame.setAttribute('aria-busy','false'); showError(); } }
 }
-
 function turn(direction) {
-  page = Math.min(Math.max(page + direction * (wide ? 2 : 1), 1), pageCount);
-  renderReader();
+  if (screen !== 'reader') return;
+  const target = clampPage(page + direction * (wide ? 2 : 1), pageCount);
+  if (target === page) return;
+  page = target; renderReader();
 }
-
-function startPageGesture(event) {
-  gestureStart = { x: event.clientX, y: event.clientY };
-  const frame = app.querySelector(".page-frame");
-  if (frame) frame.style.transition = "none";
-  event.currentTarget.setPointerCapture(event.pointerId);
+function capture() {
+  if (!canvases.length) return;
+  const output = document.createElement('canvas'); output.width = canvases.reduce((sum,c) => sum+c.width,0); output.height = Math.max(...canvases.map(c => c.height));
+  const context = output.getContext('2d'); context.fillStyle = '#fff'; context.fillRect(0,0,output.width,output.height);
+  let x = 0; for (const canvas of canvases) { context.drawImage(canvas,x,0); x += canvas.width; }
+  const filename = `${activeBook.subtitle}-${page}쪽.png`;
+  output.toBlob(blob => { if (!blob) return; const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000); });
 }
-
-function movePageGesture(event) {
-  if (!gestureStart) return;
-  const frame = app.querySelector(".page-frame");
-  if (!frame) return;
-  const deltaX = event.clientX - gestureStart.x;
-  const offset = Math.max(-42, Math.min(42, deltaX * .18));
-  frame.style.transform = `translate3d(${offset}px,0,0)`;
+media.addEventListener('change', event => { wide = event.matches; if (screen === 'reader') renderReader(); });
+window.addEventListener('keydown', event => {
+  if (screen !== 'reader' || event.target.closest('input,textarea,select,[contenteditable=true]') || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); turn(event.key === 'ArrowLeft' ? -1 : 1); }
+});
+libraryLinks.forEach(link => link.onclick = showLibrary);
+viewerLink.onclick = () => { if (screen !== 'reader') { const book = activeBook || books[0]; if (book) openBook(book); } };
+function openHash() { const params = new URLSearchParams(location.hash.slice(1)), book = books.find(book => book.id === params.get('book')); if (book) { openBook(book,params.get('page') || 1); return true; } return false; }
+window.addEventListener('hashchange', () => { if (!openHash()) showLibrary(); });
+async function loadBooks() {
+  try {
+    const response = await fetch('./public/books/manifest.json',{cache:'no-store'}); if (!response.ok) throw new Error();
+    books = validateBooks(await response.json()); if (!openHash()) showLibrary();
+  } catch { app.innerHTML = '<section class="empty"><p>문집 목록을 불러오지 못했습니다.</p><button>다시 시도</button></section>'; app.querySelector('button').onclick = loadBooks; }
 }
-
-function finishPageGesture(event) {
-  const start = gestureStart;
-  gestureStart = null;
-  if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  if (!start) return;
-  const deltaX = event.clientX - start.x;
-  const deltaY = event.clientY - start.y;
-  if (Math.abs(deltaX) < 48 || Math.abs(deltaX) <= Math.abs(deltaY)) { settlePageFrame(0); return; }
-  suppressPageClick = true;
-  window.setTimeout(() => { suppressPageClick = false; }, 0);
-  const direction = deltaX < 0 ? 1 : -1;
-  turn(direction);
-  settlePageFrame(direction);
-}
-
-function turnFromPageEdge(direction) {
-  if (suppressPageClick) {
-    suppressPageClick = false;
-    return;
-  }
-  turn(direction);
-  settlePageFrame(direction);
-}
-
-function settlePageFrame(direction) {
-  const frame = app.querySelector(".page-frame");
-  if (!frame) return;
-  frame.style.transition = "none";
-  if (direction !== 0) frame.style.transform = `translate3d(${direction > 0 ? 34 : -34}px,0,0)`;
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    frame.style.transition = "transform 320ms cubic-bezier(.22,.8,.2,1)";
-    frame.style.transform = "translate3d(0,0,0)";
-  }));
-}
-
-async function capture() {
-  if (!primaryCanvas) return;
-  const source = secondaryCanvas ? document.createElement("canvas") : primaryCanvas;
-  if (secondaryCanvas) { source.width = primaryCanvas.width + secondaryCanvas.width; source.height = Math.max(primaryCanvas.height, secondaryCanvas.height); const context = source.getContext("2d"); context.fillStyle = "#fff"; context.fillRect(0, 0, source.width, source.height); context.drawImage(primaryCanvas, 0, 0); context.drawImage(secondaryCanvas, primaryCanvas.width, 0); }
-  const anchor = document.createElement("a"); anchor.href = source.toDataURL("image/png"); anchor.download = `${activeBook.title}-${String(page).padStart(2, "0")}${secondaryCanvas ? `-${String(page + 1).padStart(2, "0")}` : ""}쪽.png`; anchor.click();
-}
-
-window.matchMedia("(min-width:1051px)").addEventListener("change", (event) => { wide = event.matches; if (activeBook) renderReader(); });
-window.addEventListener("keydown", (event) => { if (!activeBook) return; if (event.key === "ArrowLeft") turn(-1); if (event.key === "ArrowRight") turn(1); });
-libraryLinks.forEach((link) => link.addEventListener("click", renderLibrary));
-viewerLink.addEventListener("click", () => activeBook ? openBook(activeBook) : books[0] && openBook(books[0]));
-loadBooks().catch(() => { app.innerHTML = "<div class=empty>문집 목록을 불러오지 못했습니다.</div>"; });
+loadBooks();
